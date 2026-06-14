@@ -1,0 +1,40 @@
+
+---
+
+### 3. `improvements.md`
+
+```markdown
+# Suggested Improvements – Advanced AI Agent v2
+
+## High Priority
+
+1. **Implement Full Router Branches**
+   - Add specialist agents (Research, Summarization, Content Creation, Analytics)
+
+2. **Complete Retry Loop**
+   - If Critic fails → loop back to General Assistant (max 2 retries)
+
+3. **Fix Memory Save Node**
+   - Standardize field names (`user_message`, `response_summary`, `tool_used`)
+
+4. **Add More Tools**
+   - Content analysis, calculator, code interpreter, image analysis
+
+## Medium Priority
+
+- Better error handling & centralized logging node
+- Add LangSmith / LangFuse observability
+- Support file attachments (PDF, DOCX) via n8n binary data
+- Multi-user support with proper authentication
+- Rate limiting on webhook
+
+## Nice-to-Haves
+
+- Voice input / Telegram / Slack integration
+- Dashboard for conversation history
+- Cost tracking per session
+- Human-in-the-loop approval for critical responses
+
+## Future Vision
+
+Turn this into a full **Multi-Agent System** with specialized agents communicating via memory.

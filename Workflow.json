@@ -1,0 +1,745 @@
+{
+  "name": "tt",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-agent-v2",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "8a2bc475-1f86-4acf-b571-55a43c939557",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        2128,
+        640
+      ],
+      "webhookId": "ai-agent-v2-trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item.json;\nlet userMessage = item.userMessage || item.message || '';\nconst userContent = item.userContent || item.article || '';\nconst userEmail = item.email || item.email_to || 'user@example.com';\nconst sessionId = item.sessionId || item.session_id || 'session_' + Math.random().toString(36).substr(2, 9);\nconst conversationHistory = item.conversationHistory || [];\n\nif (!userMessage || userMessage.trim() === '') {\n  userMessage = \"Summarize the attached content\";\n}\nreturn [{ json: {\n  userMessage,\n  userContent,\n  userEmail,\n  sessionId,\n  conversationHistory: Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : [],\n  timestamp: new Date().toISOString(),\n  requestId: 'req_' + Date.now() + '_' + Math.floor(Math.random() * 1000000),\n  retryCount: 0,\n  maxRetries: 2\n}}];"
+      },
+      "id": "4b8596be-13b1-4186-88be-accd240c13a1",
+      "name": "Validate & Extract",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2656,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://oevhfludpmfykcogniuf.supabase.co/rest/v1/agent_memory",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ldmhmbHVkcG1meWtjb2duaXVmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMzE3MDIsImV4cCI6MjA5NjgwNzcwMn0.wiA_D0GhqPeuVkWQgz0za7e305s7cDKdvh74RtifaYw"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ldmhmbHVkcG1meWtjb2duaXVmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMzE3MDIsImV4cCI6MjA5NjgwNzcwMn0.wiA_D0GhqPeuVkWQgz0za7e305s7cDKdvh74RtifaYw"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"session_id\": \"{{ $json.sessionId }}\", \"select\": \"*\" }",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "969f5991-a974-4e00-b01b-60749857b6be",
+      "name": "Fetch Memory (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2896,
+        640
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const current = $('Validate & Extract').first().json;\nlet memory = [];\nlet userProfile = {};\n\ntry {\n  const raw = $input.first().json;\n  if (Array.isArray(raw)) {\n    memory = raw.slice(-10);\n  } else if (raw && raw.error) {\n    memory = [];\n  }\n} catch(e) {\n  memory = [];\n}\n\nconst pastTopics = memory.map(m => m.topic || '').filter(Boolean);\nconst pastTools = memory.map(m => m.tool_used || '').filter(Boolean);\nuserProfile = {\n  knownTopics: [...new Set(pastTopics)].slice(-5),\n  preferredTools: [...new Set(pastTools)].slice(-3),\n  sessionCount: memory.length\n};\n\nconst memoryContext = memory.length > 0\n  ? memory.map(m => `[${m.created_at || 'past'}] User asked: \"${m.user_message || ''}\" → Agent used: ${m.tool_used || 'unknown'} → Summary: ${m.response_summary || ''}`).join('\\n')\n  : 'No prior memory for this session.';\n\nreturn [{ json: {\n  ...current,\n  memory,\n  memoryContext,\n  userProfile,\n  agentState: 'memory_loaded'\n}}];"
+      },
+      "id": "04368b2e-6f3f-48b5-bf7a-f4bcc2fd378c",
+      "name": "Merge Memory Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3136,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst msg = data.userMessage.toLowerCase();\nconst hasContent = data.userContent && data.userContent.length > 0;\n\nconst needsSearch = msg.includes('latest') || msg.includes('current') || msg.includes('today') ||\n  msg.includes('news') || msg.includes('price') || msg.includes('find') ||\n  msg.includes('search') || msg.includes('who is') || msg.includes('what is');\n\nconst needsAnalysis = msg.includes('analyze') || msg.includes('compare') || msg.includes('research') ||\n  msg.includes('trends') || msg.includes('insights');\n\nconst wordCount = data.userMessage.split(' ').length;\nconst complexity = wordCount > 80 ? 'high' : wordCount > 30 ? 'medium' : 'low';\n\nconst toolPlan = [];\nif (needsSearch) toolPlan.push('web_search');\nif (hasContent) toolPlan.push('content_processing');\nif (needsAnalysis) toolPlan.push('deep_analysis');\ntoolPlan.push('llm_generation');\ntoolPlan.push('self_critique');\n\nconst executionPlan = {\n  complexity,\n  needsSearch,\n  needsAnalysis,\n  toolPlan,\n  estimatedSteps: toolPlan.length,\n  steps: toolPlan\n};\n\nreturn [{ json: {\n  ...data,\n  complexity,\n  needsSearch,\n  executionPlan,\n  agentState: 'planning_complete'\n}}];"
+      },
+      "id": "dd21fcf4-54e2-41f4-adbc-830ec6cb8114",
+      "name": "Agentic Planning Layer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3376,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "groqApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.1,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an intelligent router. Given the user request, memory context, and available tools, decide the best specialist agent AND whether a web search tool should be used first. Return JSON with: agent_target (one of: summarization, content_creation, content_improvement, research, analytics, general_assistant, clarification), needs_search (boolean), search_query (string, only if needs_search is true), reasoning (one sentence).\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"User request: {{ $json.userMessage }}\\n\\nMemory context:\\n{{ $json.memoryContext }}\\n\\nUser profile: {{ JSON.stringify($json.userProfile) }}\\n\\nHas attached content: {{ $json.userContent ? 'yes' : 'no' }}\"\n    }\n  ]\n}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "dbb8caae-48d5-4e8c-945b-b82f3511d3ce",
+      "name": "Intelligent Agent Router",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3616,
+        640
+      ],
+      "credentials": {
+        "groqApi": {
+          "id": "q5e2i7QWqDt40fFo",
+          "name": "Groq account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Grab data directly\nconst incomingItem = $input.item;\nconst planningData = $('Agentic Planning Layer').first().json;\n\ntry {\n  const rawContent = incomingItem.json.choices?.[0]?.message?.content || \"\";\n  const parsed = JSON.parse(rawContent);\n  const target = (parsed.agent_target || 'general_assistant').toLowerCase().trim();\n\n  return { json: {\n    ...planningData,\n    agent_target: target,\n    needs_search: parsed.needs_search ?? planningData.needsSearch ?? false,\n    search_query: parsed.search_query || planningData.userMessage,\n    router_reasoning: parsed.reasoning || 'Direct processing'\n  }};\n} catch (error) {\n  return { json: {\n    ...planningData,\n    agent_target: 'general_assistant',\n    needs_search: false,\n    search_query: planningData.userMessage,\n    router_reasoning: `Fallback triggered: ${error.message}`\n  }};\n}"
+      },
+      "id": "8a16904e-cc57-44e4-b901-dd94817668c4",
+      "name": "Parse Agent Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3856,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "needs-search-check",
+              "leftValue": "={{ $json.needs_search }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "53aaf3cf-9c61-4c30-9fa7-4f36a2082707",
+      "name": "Needs Web Search?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4096,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://serpapi.com/search.json?q={{encodeURIComponent($json.search_query)}}&api_key=d032b140979dcae6ea777875a66f1a36ecc8a6bffd0ae2e9c923d54caafa7ae2&num=5&engine=google",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "080245b6-8537-4074-baf3-e4f4239555d0",
+      "name": "Web Search Tool (SerpAPI Free)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4336,
+        512
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "let searchResults = 'No web search was performed.';\nlet searchData = {};\n\ntry {\n  const raw = $input.first().json;\n  if (raw.organic_results && raw.organic_results.length > 0) {\n    const top5 = raw.organic_results.slice(0, 5);\n    searchResults = top5.map((r, i) =>\n      `[${i+1}] ${r.title}\\nSource: ${r.link}\\nSnippet: ${r.snippet || 'N/A'}`\n    ).join('\\n\\n');\n    searchData = { resultsCount: top5.length, query: raw.search_parameters?.q || '' };\n  } else if (raw.error) {\n    searchResults = 'Web search unavailable: ' + raw.error;\n  }\n} catch(e) {\n  searchResults = 'Web search parsing error: ' + e.message;\n}\n\nconst decision = $('Parse Agent Decision').first().json;\n\nreturn [{ json: {\n  ...decision,\n  searchResults,\n  searchData,\n  toolUsed: 'web_search',\n  agentState: 'tools_executed'\n}}];"
+      },
+      "id": "dd0d264b-1623-4f20-a294-ffd8a31babb4",
+      "name": "Parse Search Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4576,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const decision = $input.first().json;\nreturn [{ json: {\n  ...decision,\n  searchResults: 'No web search performed for this request.',\n  searchData: {},\n  toolUsed: 'none',\n  agentState: 'tools_executed'\n}}];"
+      },
+      "id": "9025fb98-fdd9-48c8-b312-e1a26ede18a7",
+      "name": "Skip Search (Pass-through)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4336,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "groqApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ \n  JSON.stringify({\n    model: \"llama-3.3-70b-versatile\",\n    temperature: 0.6,\n    messages: [\n      {\n        role: \"system\",\n        content: \"You are a versatile AI assistant. Use all available context — attached content, web search results, and the user's past memory — to give a thorough, helpful answer.\"\n      },\n      {\n        role: \"user\",\n        content: `User Query: ${$json.userMessage}\\n\\nAttached Content:\\n${$json.userContent || 'No attached content provided.'}\\n\\nWeb search results:\\n${$json.searchResults || 'No results.'}\\n\\nMemory:\\n${$json.memoryContext || 'No prior memory.'}`\n      }\n    ]\n  })\n}}",
+        "options": {
+          "timeout": 25000
+        }
+      },
+      "id": "cb792f6f-bbe7-40f0-96d1-21c983349103",
+      "name": "General Assistant Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5072,
+        736
+      ],
+      "credentials": {
+        "groqApi": {
+          "id": "q5e2i7QWqDt40fFo",
+          "name": "Groq account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "let agentOutput = '';\nlet agentName = 'General Assistant Agent';\n\ntry {\n  const data = $('General Assistant Agent').first()?.json;\n  \n  // n8n AI Agent node always outputs to \"output\" key\n  agentOutput = data?.choices?.[0]?.message?.content || data?.output || '';\n  \n  // Debug: if still empty, log what we actually got\n  if (!agentOutput) {\n    agentOutput = `DEBUG - Keys found: ${Object.keys(data || {}).join(', ')} | Raw: ${JSON.stringify(data).slice(0, 200)}`;\n  }\n\n} catch (e) {\n  agentOutput = `Error: ${e.message}`;\n}\n\nconst incoming = $input.first().json || {};\n\nreturn [{\n  json: {\n    ...incoming,\n    agentOutput,\n    agentName\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5328,
+        768
+      ],
+      "id": "0d1c1c2d-e31a-4d0b-b4e2-da36dab2d745",
+      "name": "Collect Agent Response"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "groqApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.1,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a strict Quality Critic Agent. Evaluate the AI agent's response against the user's original request. Return a JSON object with: score (integer 1-10), passed (boolean, true if score >= 7), issues (array of strings listing specific problems), improvement_instructions (string with specific rewrite instructions, empty string if passed). Be strict — mark as failed if the response is vague, off-topic, factually weak, too short, or misses the user's intent.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Original user request: {{ $json.userMessage.replace(/\\\"/g, '\\\\\\\"').replace(/\\\\n/g, '\\\\\\\\n') }}\\n\\nAgent response to critique:\\n{{ $json.agentOutput.replace(/\\\"/g, '\\\\\\\"').replace(/\\\\n/g, '\\\\\\\\n') }}\\n\\nAgent used: {{ $json.agentName }}\\n\\nSearch results available: {{ $json.searchResults !== 'No web search performed for this request.' ? 'yes' : 'no' }}\"\n    }\n  ]\n}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "139a1dfc-7487-4821-896b-9ff4a314091a",
+      "name": "Critic Agent (Self-Evaluation)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5552,
+        768
+      ],
+      "credentials": {
+        "groqApi": {
+          "id": "q5e2i7QWqDt40fFo",
+          "name": "Groq account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const collectedData = $('Collect Agent Response').first().json;\nlet criticResult = { score: 10, passed: true, issues: [], improvement_instructions: '' };\n\ntry {\n  const raw = $input.first().json;\n  if (raw.choices && raw.choices[0]) {\n    criticResult = JSON.parse(raw.choices[0].message.content);\n  }\n} catch(e) {\n  criticResult = { score: 7, passed: true, issues: [], improvement_instructions: '' };\n}\n\nconst currentRetry = collectedData.retryCount || 0;\nconst maxRetries = collectedData.maxRetries || 2;\nconst finalPassed = criticResult.passed || currentRetry >= maxRetries;\n\nreturn [{ json: {\n  ...collectedData,\n  criticScore: criticResult.score || 7,\n  criticPassed: finalPassed,\n  criticIssues: criticResult.issues || [],\n  improvementInstructions: criticResult.improvement_instructions || '',\n  retryCount: currentRetry,\n  maxRetries,\n  agentState: finalPassed ? 'quality_passed' : 'quality_failed_retry'\n}}];"
+      },
+      "id": "41fa1019-b391-4d7b-9ecd-b8c061be9bf1",
+      "name": "Parse Critic Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5792,
+        768
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Grab data directly from the node that just fed into this one\nconst data = $input.first().json;\n\n// 2. Fallback logic with smart Error extraction\nlet agentOutput = 'No response generated.';\n\nif (data.error && data.error.description) {\n  agentOutput = `⚠️ AGENT API ERROR:\\n${data.error.description}`;\n} else {\n  agentOutput = data.agentOutput || \n                data.text || \n                data.response || \n                data.output || \n                (data.choices && data.choices[0]?.message?.content) || \n                'No response generated.';\n}\n\nconst agentName = data.agentName || (data.error ? 'System Error Monitor' : 'AI Agent');\nconst sessionId = data.sessionId || 'unknown';\nconst criticScore = data.error ? 0 : (data.criticScore || 10);\nconst retryCount = data.retryCount || 0;\nconst issues = data.criticIssues || [];\nconst toolUsed = data.toolUsed || 'none';\nconst searchUsed = toolUsed === 'web_search';\n\nconst userEmail = data.userEmail || data.email || 'user@example.com';\nconst userMessage = data.userMessage || '';\nconst requestId = data.requestId || '';\nconst routerReasoning = data.router_reasoning || '';\n\nconst qualityColor = data.error ? '#ef4444' : (criticScore >= 8 ? '#22c55e' : criticScore >= 6 ? '#f59e0b' : '#ef4444');\nconst qualityLabel = data.error ? 'Execution Failed' : (criticScore >= 8 ? 'High Quality' : criticScore >= 6 ? 'Acceptable' : 'Best Effort');\n\nconst responseSummary = agentOutput.slice(0, 300) + (agentOutput.length > 300 ? '...' : '');\n\nconst htmlEmail = `<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n  <title>AI Agent Response</title>\n  <style>\n    body{font-family:Arial,sans-serif;max-width:720px;margin:auto;padding:20px;line-height:1.7;}\n    .header{background:linear-gradient(135deg,#1e293b 0%,#334155 100%);color:white;padding:28px 32px;border-radius:12px 12px 0 0;}\n    .content{background:#f8fafc;padding:28px 32px;border-radius:0 0 12px 12px;}\n    .meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;}\n    .meta-card{background:white;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;}\n    .meta-label{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:4px;}\n    .meta-value{font-size:14px;font-weight:600;color:#1e293b;}\n    .quality-badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;background:${qualityColor}22;color:${qualityColor};border:1px solid ${qualityColor}44;}\n    .tool-badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:12px;background:#6366f122;color:#6366f1;border:1px solid #6366f144;margin-left:6px;}\n    .response-box{background:white;border:1px solid #e2e8f0;border-radius:10px;padding:24px;white-space:pre-wrap;font-size:14px;line-height:1.8;color:#334155;}\n    .footer{margin-top:20px;font-size:11px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:12px;}\n  </style>\n</head>\n<body>\n  <div class=\"header\">\n    <h1 style=\"margin:0 0 6px;font-size:22px;\">Advanced AI Agent v2</h1>\n    <p style=\"margin:0;opacity:.8;font-size:13px;\">Full Agentic Response — Memory + Tools + Self-Correction</p>\n  </div>\n  <div class=\"content\">\n    <div class=\"meta-grid\">\n      <div class=\"meta-card\"><div class=\"meta-label\">Agent used</div><div class=\"meta-value\">${agentName}</div></div>\n      <div class=\"meta-card\"><div class=\"meta-label\">Status Check</div><div class=\"meta-value\"><span class=\"quality-badge\">${qualityLabel}</span></div></div>\n      <div class=\"meta-card\"><div class=\"meta-label\">Tools used</div><div class=\"meta-value\">${searchUsed ? '<span class=\"tool-badge\">Web Search</span>' : 'Internal only'}</div></div>\n      <div class=\"meta-card\"><div class=\"meta-label\">Self-corrections</div><div class=\"meta-value\">${retryCount} of 2</div></div>\n      <div class=\"meta-card\"><div class=\"meta-label\">Session ID</div><div class=\"meta-value\" style=\"font-size:11px;\">${sessionId}</div></div>\n      <div class=\"meta-card\"><div class=\"meta-label\">Request ID</div><div class=\"meta-value\" style=\"font-size:11px;\">${requestId}</div></div>\n    </div>\n    ${issues.length > 0 ? '<div style=\"background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;\"><strong style=\"color:#c2410c;\">Note:</strong> ' + issues.join('; ') + '</div>' : ''}\n    <h2 style=\"font-size:16px;color:#1e293b;margin:0 0 12px;\">Response Summary</h2>\n    <div class=\"response-box\" style=\"${data.error ? 'color:#ef4444; background:#fef2f2; border-color:#fca5a5;' : ''}\">${agentOutput.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\\n/g,'<br>')}</div>\n    <div class=\"footer\">Advanced AI Agent v2 | Groq Llama-3.3-70b | Memory: Supabase | Tools: SerpAPI<br>Router reasoning: ${routerReasoning}</div>\n  </div>\n</body>\n</html>`;\n\nconst plainText = `ADVANCED AI AGENT v2 RESPONSE\\n${'='.repeat(50)}\\nAgent: ${agentName}\\nStatus: ${qualityLabel}\\n\\nRESPONSE:\\n${agentOutput}`;\n\nreturn [{ json: {\n  ...data,\n  htmlEmail,\n  plainText,\n  emailSubject: `[AI Agent Status] · ${qualityLabel} · ${new Date().toLocaleDateString()}`,\n  userEmail,\n  responseSummary,\n  agentOutput,\n  agentName,\n  toolUsed,\n  criticScore,\n  retryCount,\n  agentState: 'email_ready'\n}}];"
+      },
+      "id": "364549b0-ec33-43f8-9fdf-71ad2d9827d7",
+      "name": "Assemble Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6352,
+        768
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://oevhfludpmfykcogniuf.supabase.co/rest/v1/agent_memory",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ldmhmbHVkcG1meWtjb2duaXVmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMzE3MDIsImV4cCI6MjA5NjgwNzcwMn0.wiA_D0GhqPeuVkWQgz0za7e305s7cDKdvh74RtifaYw"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ldmhmbHVkcG1meWtjb2duaXVmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMzE3MDIsImV4cCI6MjA5NjgwNzcwMn0.wiA_D0GhqPeuVkWQgz0za7e305s7cDKdvh74RtifaYw"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"session_id\": \"={{ $json.sessionId }}\",\n  \"user_profile\": \"={{ $json.cleanUserMessage }}\",\n  \"tool_used\": \"={{ $json.cleanAgentName }}\",\n  \"conversation_summary\": \"={{ $json.cleanResponseSummary }}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "cb5fa000-1ffe-4577-b22f-3934d95b09bb",
+      "name": "Save to Memory (Supabase)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        6800,
+        624
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.userEmail !== 'user@example.com' ? $json.userEmail : 'faisalmrasul13@gmail.com' }}",
+        "subject": "={{ $json.emailSubject }}",
+        "message": "={{ $json.htmlEmail }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        6816,
+        960
+      ],
+      "id": "ae01def4-21cd-488a-9d64-0e63a2cbf614",
+      "name": "Send Email (Gmail)",
+      "webhookId": "f75e4dce-1cc2-4f41-b161-de9d0916bb19",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "D6ZSXCeaiJj4UilF",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"success\",\n  \"message\": \"Response generated and emailed successfully.\",\n  \"agent\": \"{{ $('Assemble Email').first().json.agentName }}\",\n  \"quality_score\": {{ $('Assemble Email').first().json.criticScore }},\n  \"retries\": {{ $('Assemble Email').first().json.retryCount }},\n  \"search_used\": {{ $('Assemble Email').first().json.toolUsed === 'web_search' }},\n  \"session_id\": \"{{ $('Assemble Email').first().json.sessionId }}\"\n}",
+        "options": {}
+      },
+      "id": "4d4e7752-e9a2-4f4f-9eff-b3701be2e2af",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        7168,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "e3dca618-4c98-4dd7-9971-7c65530506a3",
+                    "leftValue": "={{ $json.agent_target }}",
+                    "rightValue": "general_assistant",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        4816,
+        672
+      ],
+      "id": "ee429d92-cadd-4987-bf2d-b538b38c639a",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const incoming = $input.first().json;\n\n// Data comes nested inside \"body\" from webhook\nconst body = incoming.body || incoming;\n\nreturn [{\n  json: {\n    ...incoming,\n    userMessage:    body.userMessage    || '',\n    userContent:    body.userContent    || '',\n    searchResults:  body.searchResults  || '',\n    memoryContext:  body.memoryContext  || '',\n    sessionId:      body.sessionId      || `session_${Date.now()}`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2368,
+        640
+      ],
+      "id": "b11ff7fe-ba50-403f-9808-4abaed6741d5",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {
+    "Webhook Trigger": [
+      {
+        "json": {
+          "article": "RELEASE 15-195   •   September 28, 2015   •   NASA Headquarters, Washington\r\nNASA Confirms Evidence That Liquid Water Flows on Today’s Mars\r\nSource: nasa.gov/news-release/nasa-confirms-evidence-that-liquid-water-flows-on-todays-mars\r\nEditor’s Note: The findings described in this press release were updated with additional research published on November 20, 2017, described in “Recurring Martian Streaks: Sand, not Water?”\r\nNew findings from NASA’s Mars Reconnaissance Orbiter (MRO) provide the strongest evidence yet that liquid water flows intermittently on present-day Mars.\r\nUsing an imaging spectrometer on MRO, researchers detected signatures of hydrated minerals on slopes where mysterious streaks are seen on the Red Planet. These darkish streaks appear to ebb and flow over time. They darken and appear to flow down steep slopes during warm seasons, and then fade in cooler seasons. They appear in several locations on Mars when temperatures are above minus 10 degrees Fahrenheit (minus 23 Celsius), and disappear at colder times.\r\n“Our quest on Mars has been to ‘follow the water,’ in our search for life in the universe, and now we have convincing science that validates what we’ve long suspected. This is a significant development, as it appears to confirm that water — albeit briny — is flowing today on the surface of Mars.”\r\n— John Grunsfeld, Astronaut & Associate Administrator, NASA Science Mission Directorate\r\nThese downhill flows, known as recurring slope lineae (RSL), often have been described as possibly related to liquid water. The new findings of hydrated salts on the slopes point to what that relationship may be to these dark features. The hydrated salts would lower the freezing point of a liquid brine, just as salt on roads here on Earth causes ice and snow to melt more rapidly. Scientists say it’s likely a shallow subsurface flow, with enough water wicking to the surface to explain the darkening.\r\n“We found the hydrated salts only when the seasonal features were widest, which suggests that either the dark streaks themselves or a process that forms them is the source of the hydration. In either case, the detection of hydrated salts on these slopes means that water plays a vital role in the formation of these streaks.”\r\n— Lujendra Ojha, Georgia Institute of Technology, Lead Author, Nature Geoscience (Sept. 28, 2015)\r\nOjha first noticed these puzzling features as a University of Arizona undergraduate student in 2010, using images from the MRO’s High Resolution Imaging Science Experiment (HiRISE). HiRISE observations now have documented RSL at dozens of sites on Mars. The new study pairs HiRISE observations with mineral mapping by MRO’s Compact Reconnaissance Imaging Spectrometer for Mars (CRISM).\r\nThe spectrometer observations show signatures of hydrated salts at multiple RSL locations, but only when the dark features were relatively wide. When the researchers looked at the same locations and RSL weren’t as extensive, they detected no hydrated salt.\r\nPerchlorates: The Key Chemical Signature\r\nOjha and his co-authors interpret the spectral signatures as caused by hydrated minerals called perchlorates. The hydrated salts most consistent with the chemical signatures are likely a mixture of:\r\n•\tMagnesium perchlorate\r\n•\tMagnesium chlorate\r\n•\tSodium perchlorate\r\nSome perchlorates have been shown to keep liquids from freezing even when conditions are as cold as minus 94 degrees Fahrenheit (minus 70 Celsius). On Earth, naturally produced perchlorates are concentrated in deserts, and some types can be used as rocket propellant.\r\nPerchlorates have previously been seen on Mars. NASA’s Phoenix lander and Curiosity rover both found them in the planet’s soil, and some scientists believe that the Viking missions in the 1970s measured signatures of these salts. However, this study of RSL detected perchlorates, now in hydrated form, in different areas than those explored by the landers. This is also the first time perchlorates have been identified from orbit.\r\nAbout the Mars Reconnaissance Orbiter\r\nMRO has been examining Mars since 2006 with its six science instruments.\r\n“The ability of MRO to observe for multiple Mars years with a payload able to see the fine detail of these features has enabled findings such as these: first identifying the puzzling seasonal streaks and now making a big step towards explaining what they are.”\r\n— Rich Zurek, MRO Project Scientist, NASA Jet Propulsion Laboratory, Pasadena, California\r\n“When most people talk about water on Mars, they’re usually talking about ancient water or frozen water. Now we know there’s more to the story. This is the first spectral detection that unambiguously supports our liquid water-formation hypotheses for RSL.”\r\n— Lujendra Ojha, Lead Author\r\n“It took multiple spacecraft over several years to solve this mystery, and now we know there is liquid water on the surface of this cold, desert planet. It seems that the more we study Mars, the more we learn how life could be supported and where there are resources to support life in the future.”\r\n— Michael Meyer, Lead Scientist, NASA Mars Exploration Program\r\nResearch Team & Institutions\r\nThere are eight co-authors of the Nature Geoscience paper, including:\r\n•\tMary Beth Wilhelm — NASA Ames Research Center, Moffett Field, California & Georgia Tech\r\n•\tScott Murchie — CRISM Principal Investigator, Johns Hopkins University Applied Physics Laboratory, Laurel, Maryland\r\n•\tAlfred McEwen — HiRISE Principal Investigator, University of Arizona Lunar and Planetary Laboratory, Tucson, Arizona\r\n•\tAdditional researchers from Georgia Tech, Southwest Research Institute (Boulder, Colorado), and Laboratoire de Planétologie et Géodynamique (Nantes, France)\r\nNASA’s Jet Propulsion Laboratory (JPL) in Pasadena, California manages the Mars Reconnaissance Orbiter Project for NASA’s Science Mission Directorate, Washington. Lockheed Martin built the orbiter and collaborates with JPL to operate it.\r\nMedia Contacts\r\nNASA Headquarters, Washington\r\nDwayne Brown  |  202-358-1726  |  dwayne.c.brown@nasa.gov\r\nLaurie Cantillo  |  202-358-1077  |  laura.l.cantillo@nasa.gov\r\nJet Propulsion Laboratory, Pasadena, California\r\nGuy Webster  |  818-354-6278  |  guy.w.webster@jpl.nasa.gov\r\nFor more information: https://www.nasa.gov/mro  |  https://www.nasa.gov/topics/journeytomars\r\n"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Extract": {
+      "main": [
+        [
+          {
+            "node": "Fetch Memory (Supabase)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Memory (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Merge Memory Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Memory Context": {
+      "main": [
+        [
+          {
+            "node": "Agentic Planning Layer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agentic Planning Layer": {
+      "main": [
+        [
+          {
+            "node": "Intelligent Agent Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intelligent Agent Router": {
+      "main": [
+        [
+          {
+            "node": "Parse Agent Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Agent Decision": {
+      "main": [
+        [
+          {
+            "node": "Needs Web Search?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Web Search?": {
+      "main": [
+        [
+          {
+            "node": "Web Search Tool (SerpAPI Free)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Search (Pass-through)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Web Search Tool (SerpAPI Free)": {
+      "main": [
+        [
+          {
+            "node": "Parse Search Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Search Results": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Search (Pass-through)": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "General Assistant Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "General Assistant Agent": {
+      "main": [
+        [
+          {
+            "node": "Collect Agent Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Agent Response": {
+      "main": [
+        [
+          {
+            "node": "Critic Agent (Self-Evaluation)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critic Agent (Self-Evaluation)": {
+      "main": [
+        [
+          {
+            "node": "Parse Critic Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Critic Result": {
+      "main": [
+        [
+          {
+            "node": "Assemble Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Email": {
+      "main": [
+        [
+          {
+            "node": "Save to Memory (Supabase)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Email (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Memory (Supabase)": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email (Gmail)": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Validate & Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "a99d0a22-9e88-4284-a3bb-ea4ba092f18a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6df540e8dc9fed0123529be8d8ac087f4a406d00f7857cb9a7ead0ed628670dd"
+  },
+  "nodeGroups": [],
+  "id": "sc9FuS6oIRK0rv3x",
+  "tags": [
+    {
+      "updatedAt": "2026-06-12T02:26:30.305Z",
+      "createdAt": "2026-06-12T02:26:30.305Z",
+      "id": "8KqGoycjNFHj1Gzi",
+      "name": "Self-Correction"
+    },
+    {
+      "updatedAt": "2026-06-12T02:26:30.456Z",
+      "createdAt": "2026-06-12T02:26:30.456Z",
+      "id": "9LPewmCOp1H0UZht",
+      "name": "Tool Use"
+    },
+    {
+      "updatedAt": "2026-06-12T02:26:30.321Z",
+      "createdAt": "2026-06-12T02:26:30.321Z",
+      "id": "cFS17osL0u1HF8FU",
+      "name": "Memory"
+    },
+    {
+      "updatedAt": "2026-06-11T10:28:13.191Z",
+      "createdAt": "2026-06-11T10:28:13.191Z",
+      "id": "gn7C0uzqRUSO0DPJ",
+      "name": "Email Delivery"
+    },
+    {
+      "updatedAt": "2026-06-12T02:26:30.469Z",
+      "createdAt": "2026-06-12T02:26:30.469Z",
+      "id": "nOkiE305oD2TRwoE",
+      "name": "AI Agent v2"
+    },
+    {
+      "updatedAt": "2026-06-11T06:04:48.606Z",
+      "createdAt": "2026-06-11T06:04:48.606Z",
+      "id": "yOKWF0SVNCJzLnf0",
+      "name": "Groq"
+    }
+  ]
+}
