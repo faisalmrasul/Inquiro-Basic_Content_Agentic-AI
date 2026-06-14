@@ -1,4 +1,4 @@
-# Advanced AI Agent v2
+# Basic Content Agent AI
 
 A sophisticated **agentic AI workflow** built with n8n featuring memory, tool use, intelligent routing, self-critique, and professional email delivery.
 
