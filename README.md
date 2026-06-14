@@ -2,10 +2,6 @@
 
 A sophisticated **agentic AI workflow** built with n8n featuring memory, tool use, intelligent routing, self-critique, and professional email delivery.
 
-![Agentic AI](https://img.shields.io/badge/Agentic-8.2/10-blue)
-![n8n](https://img.shields.io/badge/n8n-Workflow-orange)
-![Groq](https://img.shields.io/badge/Groq-Llama--3.3-70b-green)
-
 ## ✨ Features
 
 - **Persistent Memory** via Supabase (user profile + conversation history)
